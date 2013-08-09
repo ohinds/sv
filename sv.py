@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import nibabel as nb
 import numpy as np
 import sys
 import vtk
@@ -7,18 +8,32 @@ import vtk
 from mindboggle.utils.io_vtk import read_faces_points, read_scalars
 
 class SurfaceInteractor(vtk.vtkInteractorStyleTrackballCamera):
-    def __init__(self, interactor, callback):
+    def __init__(self, interactor, key_callback, mouse_callback):
         self.interactor = interactor
-        self.callback = callback
+        self.picker = vtk.vtkPointPicker()
+        self.key_callback = key_callback
+        self.mouse_callback = mouse_callback
         self.AddObserver("KeyPressEvent", self.key_pressed)
+        self.AddObserver("MouseMoveEvent", self.mouse_moved)
 
     def key_pressed(self, obj, event):
         key = self.interactor.GetKeyCode()
 
         if key == ",":
-            self.callback(False)
+            self.key_callback(False)
         elif key == ".":
-            self.callback(True)
+            self.key_callback(True)
+
+    def mouse_moved(self, obj, event):
+        coords = self.interactor.GetEventPosition()
+
+        if self.picker.Pick(
+            coords[0], coords[1], 0,
+            self.interactor.GetRenderWindow().GetRenderers().GetFirstRenderer()):
+            self.mouse_callback(self.picker.GetPointId())
+
+        self.OnMouseMove()
+
 
 class SurfaceViewer(object):
 
@@ -26,6 +41,7 @@ class SurfaceViewer(object):
 
         self.surface = None
         self.surface_overlays = []
+        self.surface_overlay_data = []
         self.points = []
         self.point_clouds = []
 
@@ -33,10 +49,22 @@ class SurfaceViewer(object):
             surf_file = args[0]
             overlay_files = args[1]
 
-            face_list, points, npoints = read_faces_points(surf_file)
+            if surf_file.endswith(".vtk"):
+                face_list, points, npoints = read_faces_points(surf_file)
+            else:
+                (points, face_list) = nb.freesurfer.read_geometry(surf_file)
+                npoints = len(points)
+
+            import ipdb; ipdb.set_trace()
+
             overlays = []
             for overlay_file in overlay_files:
-                overlays.append(read_scalars(overlay_file))
+                if overlay_file.endswith(".vtk"):
+                    overlays.append(np.array(read_scalars(overlay_file)))
+                else:
+                    labels, _, _ = nb.freesurfer.read_annot(overlay_file)
+                    overlays.append(labels)
+
 
         elif len(args) == 3:
             points = args[0]
@@ -61,9 +89,11 @@ class SurfaceViewer(object):
         # overlays
         self.scalars = []
         self.current_overlay = -1
+
+        import ipdb; ipdb.set_trace()
         for data in overlays:
-            if len(data[0]) > 0:
-                self.add_surface_overlay(data[0])
+            if data.shape[0] > 0:
+                self.add_surface_overlay(data)
 
     def set_surface(self, points, faces):
         assert self.surface is None
@@ -91,8 +121,9 @@ class SurfaceViewer(object):
                 255 * (ran[1] - val) / (ran[1] - ran[0]))
 
         self.surface_overlays.append(scalar)
+        self.surface_overlay_data.append(data)
 
-    def add_point_cloud(self, points, indices=None):
+    def add_point_cloud(self, points, indices=None, rgb=(255, 255, 0)):
         point_data = vtk.vtkPoints()
         cell_data = vtk.vtkCellArray()
         scalar_data = vtk.vtkUnsignedCharArray()
@@ -101,7 +132,7 @@ class SurfaceViewer(object):
         for idx in indices if indices is not None else xrange(len(points)):
             cell_data.InsertNextCell(1)
             cell_data.InsertCellPoint(point_data.InsertNextPoint(points[idx]))
-            scalar_data.InsertNextTuple3(255, 255, 0)
+            scalar_data.InsertNextTuple3(*rgb)
 
         point_poly = vtk.vtkPolyData()
         point_poly.SetPoints(point_data)
@@ -109,7 +140,7 @@ class SurfaceViewer(object):
         point_poly.GetPointData().SetScalars(scalar_data)
         self.point_clouds.append(point_poly)
 
-    def add_point_cloud_from_surf_indices(self, indices):
+    def add_point_cloud_from_surf_indices(self, indices, rgb=(255, 255, 0)):
         cell_data = vtk.vtkCellArray()
         scalar_data = vtk.vtkUnsignedCharArray()
         scalar_data.SetNumberOfComponents(3)
@@ -117,7 +148,7 @@ class SurfaceViewer(object):
         for idx in indices:
             cell_data.InsertNextCell(1)
             cell_data.InsertCellPoint(idx)
-            scalar_data.InsertNextTuple3(255, 255, 0)
+            scalar_data.InsertNextTuple3(*rgb)
 
         point_poly = vtk.vtkPolyData()
         point_poly.SetPoints(self.points[0])
@@ -145,17 +176,26 @@ class SurfaceViewer(object):
         self.surface.Modified()
         self.ren_win.Render()
 
+    def over_point(self, point_id):
+        if len(self.surface_overlays) < 1:
+            return
+        print "%d: %f" % (
+            point_id, self.surface_overlay_data[self.current_overlay][point_id])
+
     def show(self):
         ren = vtk.vtkRenderer()
         self.ren_win = vtk.vtkRenderWindow()
         self.ren_win.AddRenderer(ren)
         iren = vtk.vtkRenderWindowInteractor()
         iren.SetRenderWindow(self.ren_win)
-        iren.SetInteractorStyle(SurfaceInteractor(iren, self.change_overlay))
+        iren.SetInteractorStyle(
+            SurfaceInteractor(iren, self.change_overlay, self.over_point))
 
         surf_mapper = vtk.vtkDataSetMapper()
         surf_mapper.SetInput(self.surface)
         surf_actor = vtk.vtkActor()
+        # surf_actor.GetProperty().SetEdgeColor(1, 1, 1)
+        # surf_actor.GetProperty().EdgeVisibilityOn()
         surf_actor.SetMapper(surf_mapper)
         ren.AddActor(surf_actor)
 
@@ -164,6 +204,7 @@ class SurfaceViewer(object):
             pt_mapper.SetInput(cloud)
             pt_mapper.SetScalarVisibility(1)
             pt_actor = vtk.vtkActor()
+            pt_actor.GetProperty().SetPointSize(5)
             pt_actor.SetMapper(pt_mapper)
             ren.AddActor(pt_actor)
 
