@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 
+"""This is for ohinds only. Don't complain if you aren't ohinds.
+"""
+
 import nibabel as nb
 import numpy as np
 import sys
@@ -55,12 +58,10 @@ class SurfaceViewer(object):
                 (points, face_list) = nb.freesurfer.read_geometry(surf_file)
                 npoints = len(points)
 
-            import ipdb; ipdb.set_trace()
-
             overlays = []
             for overlay_file in overlay_files:
                 if overlay_file.endswith(".vtk"):
-                    overlays.append(np.array(read_scalars(overlay_file)))
+                    overlays.append(np.array(read_scalars(overlay_file)[0]))
                 else:
                     labels, _, _ = nb.freesurfer.read_annot(overlay_file)
                     overlays.append(labels)
@@ -90,7 +91,6 @@ class SurfaceViewer(object):
         self.scalars = []
         self.current_overlay = -1
 
-        import ipdb; ipdb.set_trace()
         for data in overlays:
             if data.shape[0] > 0:
                 self.add_surface_overlay(data)
