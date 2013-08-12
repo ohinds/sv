@@ -159,7 +159,7 @@ class SurfaceViewer(object):
 
 
     def change_overlay(self, move_up):
-        if len(self.surface_overlays) <= 1:
+        if len(self.surface_overlays) < 1:
             return
 
         if move_up:
