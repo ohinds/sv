@@ -45,6 +45,7 @@ class SurfaceViewer(object):
         self.surface = None
         self.surface_overlays = []
         self.surface_overlay_data = []
+        self.last_overlay_value = None
         self.points = []
         self.point_clouds = []
 
@@ -158,7 +159,7 @@ class SurfaceViewer(object):
 
 
     def change_overlay(self, move_up):
-        if len(self.surface_overlays) < 1:
+        if len(self.surface_overlays) <= 1:
             return
 
         if move_up:
@@ -171,6 +172,8 @@ class SurfaceViewer(object):
             if self.current_overlay < 0:
                 self.current_overlay = len(self.surface_overlays) - 1
 
+        print "showing overlay %d" % self.current_overlay
+
         self.surface.GetPointData().SetScalars(
             self.surface_overlays[self.current_overlay])
         self.surface.Modified()
@@ -179,8 +182,17 @@ class SurfaceViewer(object):
     def over_point(self, point_id):
         if len(self.surface_overlays) < 1:
             return
+
+        if (self.last_overlay_value ==
+            self.surface_overlay_data[self.current_overlay][point_id]):
+            return
+
         print "%d: %f" % (
             point_id, self.surface_overlay_data[self.current_overlay][point_id])
+
+        self.last_overlay_value = \
+            self.surface_overlay_data[self.current_overlay][point_id]
+
 
     def show(self):
         ren = vtk.vtkRenderer()
