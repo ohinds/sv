@@ -3,6 +3,7 @@
 """This is for ohinds only. Don't complain if you aren't ohinds.
 """
 
+import argparse
 import nibabel as nb
 import numpy as np
 import sys
@@ -13,7 +14,7 @@ from mindboggle.utils.io_vtk import read_faces_points, read_scalars
 class SurfaceInteractor(vtk.vtkInteractorStyleTrackballCamera):
     def __init__(self, interactor, key_callback, mouse_callback):
         self.interactor = interactor
-        self.picker = vtk.vtkPointPicker()
+        self.picker = vtk.vtkCellPicker()
         self.key_callback = key_callback
         self.mouse_callback = mouse_callback
         self.AddObserver("KeyPressEvent", self.key_pressed)
@@ -32,16 +33,19 @@ class SurfaceInteractor(vtk.vtkInteractorStyleTrackballCamera):
 
         if self.picker.Pick(
             coords[0], coords[1], 0,
-            self.interactor.GetRenderWindow().GetRenderers().GetFirstRenderer()):
-            self.mouse_callback(self.picker.GetPointId())
+            self.interactor.GetRenderWindow().GetRenderers(
+                ).GetFirstRenderer()):
+            if self.mouse_callback is not None:
+                self.mouse_callback(self.picker.GetCellId(),
+                                    self.picker.GetPickPosition())
 
         self.OnMouseMove()
 
 
 class SurfaceViewer(object):
 
-    def __init__(self, *args):
-
+    def __init__(self, options, points=None, face_list=None, overlays=None):
+        self.options = options
         self.surface = None
         self.surface_overlays = []
         self.surface_overlay_data = []
@@ -49,9 +53,10 @@ class SurfaceViewer(object):
         self.points = []
         self.point_clouds = []
 
-        if len(args) == 2:
-            surf_file = args[0]
-            overlay_files = args[1]
+        if points is None:
+            assert face_list is None
+            surf_file = options.surface[0]
+            overlay_files = options.overlays
 
             if surf_file.endswith(".vtk"):
                 face_list, points, npoints = read_faces_points(surf_file)
@@ -64,17 +69,20 @@ class SurfaceViewer(object):
                 if overlay_file.endswith(".vtk"):
                     overlays.append(np.array(read_scalars(overlay_file)[0]))
                 else:
-                    labels, _, _ = nb.freesurfer.read_annot(overlay_file)
+                    try:
+                        labels, _, _ = nb.freesurfer.read_annot(
+                            overlay_file)
+                    except:
+                        try:
+                            labels = nb.freesurfer.read_w_data(
+                                overlay_file)
+                        except:
+                            labels = nb.freesurfer.read_morph_data(
+                                overlay_file)
                     overlays.append(labels)
 
-
-        elif len(args) == 3:
-            points = args[0]
-            face_list = args[1]
-            overlays = args[2]
-
-        else:
-            raise ValueError("invalid arguments")
+            if options.combine_overlays:
+                overlays = [np.sum(np.vstack(overlays), 0)]
 
         vertices = vtk.vtkPoints()
         for pt in points:
@@ -92,9 +100,15 @@ class SurfaceViewer(object):
         self.scalars = []
         self.current_overlay = -1
 
+        if options.colormap:
+            colormap = np.loadtxt(options.colormap)
+        else:
+            colormap = None
+
         for data in overlays:
             if data.shape[0] > 0:
-                self.add_surface_overlay(data)
+                self.add_surface_overlay(data, colormap)
+
 
     def set_surface(self, points, faces):
         assert self.surface is None
@@ -105,21 +119,35 @@ class SurfaceViewer(object):
         self.points.append(points)
         self.surface = poly_data
 
-    def add_surface_overlay(self, data):
+    def add_surface_overlay(self, data, colormap=None):
         scalar = vtk.vtkUnsignedCharArray()
         scalar.SetNumberOfComponents(3)
 
-        ran = (np.amin(data), np.amax(data))
-        mid = (ran[0] + ran[1]) / 2.
-        for val in data:
-            if val < mid:
-                gr = 255.0 * (val - ran[0]) / (mid - ran[0])
-            else:
-                gr = 255.0 * (ran[1] - val) / (ran[1] - mid)
-            scalar.InsertNextTuple3(
-                255 * (val - ran[0]) / (ran[1] - ran[0]),
-                gr,
-                255 * (ran[1] - val) / (ran[1] - ran[0]))
+        if colormap is None:
+            ran = (np.amin(data), np.amax(data))
+            mid = (ran[0] + ran[1]) / 2.
+            for val in data:
+                if val < mid:
+                    gr = 255.0 * (val - ran[0]) / (mid - ran[0])
+                else:
+                    gr = 255.0 * (ran[1] - val) / (ran[1] - mid)
+                scalar.InsertNextTuple3(
+                    255 * (val - ran[0]) / (ran[1] - ran[0]),
+                    gr,
+                    255 * (ran[1] - val) / (ran[1] - ran[0]))
+        else:
+            for val in data:
+                if val < colormap[0][0]:
+                    ind = 0
+                elif val > colormap[-1][0]:
+                    ind = colormap.shape[0] - 1
+                else:
+                    for ind in xrange(colormap.shape[0] - 1):
+                        if val < colormap[ind + 1][0]:
+                            break
+                scalar.InsertNextTuple3(255 * colormap[ind][1],
+                                        255 * colormap[ind][2],
+                                        255 * colormap[ind][3])
 
         self.surface_overlays.append(scalar)
         self.surface_overlay_data.append(data)
@@ -179,9 +207,22 @@ class SurfaceViewer(object):
         self.surface.Modified()
         self.ren_win.Render()
 
-    def over_point(self, point_id):
+    def over_cell(self, cell_id, position):
         if len(self.surface_overlays) < 1:
             return
+
+        face_vertices = self.surface.GetCell(cell_id).GetPointIds()
+        min_dist = float('inf')
+        min_point = None
+        for i in range(0, 3):
+            dist = sum((np.array(self.surface.GetPoint(
+                            face_vertices.GetId(i))) -
+                            np.array(position))**2)
+            if dist < min_dist:
+                min_dist = dist
+                min_point = face_vertices.GetId(i)
+
+        point_id = min_point
 
         if (self.last_overlay_value ==
             self.surface_overlay_data[self.current_overlay][point_id]):
@@ -201,12 +242,14 @@ class SurfaceViewer(object):
         iren = vtk.vtkRenderWindowInteractor()
         iren.SetRenderWindow(self.ren_win)
         iren.SetInteractorStyle(
-            SurfaceInteractor(iren, self.change_overlay, self.over_point))
+            SurfaceInteractor(iren, self.change_overlay,
+                              self.over_cell if self.options.show_values
+                              else None))
 
         surf_mapper = vtk.vtkDataSetMapper()
         surf_mapper.SetInput(self.surface)
         surf_actor = vtk.vtkActor()
-        # surf_actor.GetProperty().SetEdgeColor(1, 1, 1)
+        # surf_actor.GetProperty().SetEdgeColor(0.5, 0.5, 0.5)
         # surf_actor.GetProperty().EdgeVisibilityOn()
         surf_actor.SetMapper(surf_mapper)
         ren.AddActor(surf_actor)
@@ -225,12 +268,23 @@ class SurfaceViewer(object):
         self.change_overlay(True)
         iren.Start()
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print "usage %s <surf> [<overlay> ...]"
-        sys.exit(1)
+def parse_args(args):
+    parser = argparse.ArgumentParser()
 
-    surf_file = sys.argv[1]
-    overlays = sys.argv[2:] if len(sys.argv) > 2 else [sys.argv[1]]
-    SurfaceViewer(surf_file, overlays).show()
+    parser.add_argument('--show-values', '-s', action="store_true",
+                        help="Mouse over vertices to show their values")
+    parser.add_argument('--combine-overlays', '-c', action="store_true",
+                        help="Combine the values of all overlays into one")
+    parser.add_argument('--colormap', '-m',
+                        help="File containing a colormap definition")
+    parser.add_argument('surface', nargs=1,
+                        help="VTK or FreeSurfer surface file to display")
+    parser.add_argument('overlays', nargs='*',
+                        help="VTK or FreeSurfer files to overlay")
+
+
+    return parser.parse_args(args)
+
+if __name__ == "__main__":
+    SurfaceViewer(parse_args(sys.argv[1:])).show()
     sys.exit(0)
