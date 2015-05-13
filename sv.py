@@ -1,15 +1,14 @@
 #!/usr/bin/env python
 
-"""This is for ohinds only. Don't complain if you aren't ohinds.
+"""Simple visualization for vtk, off, or freesurfer surfaces
 """
 
 import argparse
 import nibabel as nb
 import numpy as np
+import sv_io
 import sys
 import vtk
-
-from mindboggle.utils.io_vtk import read_faces_points, read_scalars
 
 class SurfaceInteractor(vtk.vtkInteractorStyleTrackballCamera):
     def __init__(self, interactor, key_callback, mouse_callback):
@@ -52,17 +51,14 @@ class SurfaceViewer(object):
         self.last_overlay_value = None
         self.points = []
         self.point_clouds = []
+        self._no_show = False
 
         if points is None:
             assert face_list is None
             surf_file = options.surface[0]
             overlay_files = options.overlays
 
-            if surf_file.endswith(".vtk"):
-                face_list, points, npoints = read_faces_points(surf_file)
-            else:
-                (points, face_list) = nb.freesurfer.read_geometry(surf_file)
-                npoints = len(points)
+            points, face_list = sv_io.read_surf(surf_file)
 
             overlays = []
             for overlay_file in overlay_files:
@@ -236,6 +232,9 @@ class SurfaceViewer(object):
 
 
     def show(self):
+        if self._no_show:
+            return 0
+
         ren = vtk.vtkRenderer()
         self.ren_win = vtk.vtkRenderWindow()
         self.ren_win.AddRenderer(ren)
@@ -249,8 +248,11 @@ class SurfaceViewer(object):
         surf_mapper = vtk.vtkDataSetMapper()
         surf_mapper.SetInput(self.surface)
         surf_actor = vtk.vtkActor()
+
+        # TODO: allow interactive toggling of edges.
         # surf_actor.GetProperty().SetEdgeColor(0.5, 0.5, 0.5)
         # surf_actor.GetProperty().EdgeVisibilityOn()
+
         surf_actor.SetMapper(surf_mapper)
         ren.AddActor(surf_actor)
 
@@ -278,9 +280,9 @@ def parse_args(args):
     parser.add_argument('--colormap', '-m',
                         help="File containing a colormap definition")
     parser.add_argument('surface', nargs=1,
-                        help="VTK or FreeSurfer surface file to display")
+                        help="VTK, OFF, or FreeSurfer surface file to display")
     parser.add_argument('overlays', nargs='*',
-                        help="VTK or FreeSurfer files to overlay")
+                        help="VTK, LAB, or FreeSurfer files to overlay")
 
 
     return parser.parse_args(args)
