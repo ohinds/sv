@@ -48,7 +48,9 @@ class SurfaceViewer(object):
         self.surface = None
         self.surface_overlays = []
         self.surface_overlay_data = []
+        self.coord_transform = np.eye(4)
         self.last_overlay_value = None
+        self.last_min_point = None
         self.points = []
         self.point_clouds = []
         self._no_show = False
@@ -95,6 +97,10 @@ class SurfaceViewer(object):
         # overlays
         self.scalars = []
         self.current_overlay = -1
+
+        if options.coord_transform is not None:
+            vol = nb.load(options.coord_transform)
+            self.coord_transform = np.matrix(vol.get_affine()).I
 
         if options.colormap:
             colormap = np.loadtxt(options.colormap)
@@ -204,9 +210,6 @@ class SurfaceViewer(object):
         self.ren_win.Render()
 
     def over_cell(self, cell_id, position):
-        if len(self.surface_overlays) < 1:
-            return
-
         face_vertices = self.surface.GetCell(cell_id).GetPointIds()
         min_dist = float('inf')
         min_point = None
@@ -219,6 +222,16 @@ class SurfaceViewer(object):
                 min_point = face_vertices.GetId(i)
 
         point_id = min_point
+
+        if len(self.surface_overlays) < 1:
+            if min_point == self.last_min_point:
+                return
+
+            ras = list(self.surface.GetPoint(min_point))
+            ras.append(1)
+            vox = map(int, np.round(self.coord_transform * np.array([ras]).T))
+            print vox[0:3]
+            return
 
         if (self.last_overlay_value ==
             self.surface_overlay_data[self.current_overlay][point_id]):
@@ -275,6 +288,9 @@ def parse_args(args):
 
     parser.add_argument('--show-values', '-s', action="store_true",
                         help="Mouse over vertices to show their values")
+    parser.add_argument('--coord_transform', '-v',
+                        help="Shown vertices are modified by the transform "
+                        "in this volume")
     parser.add_argument('--combine-overlays', '-c', action="store_true",
                         help="Combine the values of all overlays into one")
     parser.add_argument('--colormap', '-m',
