@@ -20,6 +20,12 @@ def write_surf(surf_file, verts, faces):
     elif surf_file.endswith(".off"):
         write_off(surf_file, verts, faces)
     else:
+        if type(verts) is list:
+            verts = np.array(verts)
+
+        if type(faces) is list:
+            faces = np.array(faces)
+
         nb.freesurfer.write_geometry(surf_file, verts, faces)
 
 def read_off(filename):
@@ -36,7 +42,7 @@ def read_off(filename):
         for face in xrange(num_faces):
             faces.append(map(int, f.readline().split()[1:]))
 
-    return (vertices, faces)
+    return vertices, faces
 
 def write_off(filename, verts, faces):
     """write a surface in the off file format
