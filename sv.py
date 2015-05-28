@@ -48,7 +48,7 @@ class SurfaceViewer(object):
         self.surface = None
         self.surface_overlays = []
         self.surface_overlay_data = []
-        self.coord_transform = np.eye(4)
+        self.coord_transform = None
         self.last_overlay_value = None
         self.last_min_point = None
         self.points = []
@@ -66,17 +66,24 @@ class SurfaceViewer(object):
             for overlay_file in overlay_files:
                 if overlay_file.endswith(".vtk"):
                     overlays.append(np.array(read_scalars(overlay_file)[0]))
+                    print "read VTK overlay"
                 else:
+                    labels = sv_io.read_surf_cdata(overlay_file)
                     try:
-                        labels, _, _ = nb.freesurfer.read_annot(
-                            overlay_file)
+                        labels = sv_io.read_surf_cdata(overlay_file)
+                        print "read LAB overlay"
                     except:
                         try:
-                            labels = nb.freesurfer.read_w_data(
+                            labels, _, _ = nb.freesurfer.read_annot(
                                 overlay_file)
                         except:
-                            labels = nb.freesurfer.read_morph_data(
-                                overlay_file)
+                            try:
+                                labels = nb.freesurfer.read_w_data(
+                                    overlay_file)
+                            except:
+                                labels = nb.freesurfer.read_morph_data(
+                                    overlay_file)
+                        print "read FreeSurfer overlay"
                     overlays.append(labels)
 
             if options.combine_overlays:
@@ -101,6 +108,8 @@ class SurfaceViewer(object):
         if options.coord_transform is not None:
             vol = nb.load(options.coord_transform)
             self.coord_transform = np.matrix(vol.get_affine()).I
+        else:
+            self.coord_transform = np.eye(4)
 
         if options.colormap:
             colormap = np.loadtxt(options.colormap)
@@ -229,8 +238,9 @@ class SurfaceViewer(object):
 
             ras = list(self.surface.GetPoint(min_point))
             ras.append(1)
-            vox = map(int, np.round(self.coord_transform * np.array([ras]).T))
-            print vox[0:3]
+
+            vox = self.coord_transform * np.array([ras]).T
+            print np.diag(vox)
             return
 
         if (self.last_overlay_value ==
