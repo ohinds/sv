@@ -6,19 +6,29 @@ import vtk
 
 def read_surf(surf_file):
     if surf_file.endswith(".vtk"):
-        points, face_list = read_vtk(surf_file)
+        verts, faces = read_vtk(surf_file)
     elif surf_file.endswith(".off"):
-        points, face_list = read_off(surf_file)
+        verts, faces = read_off(surf_file)
+    elif surf_file.endswith(".obj"):
+        verts, faces = read_obj(surf_file)
     else:
-        points, face_list = nb.freesurfer.read_geometry(surf_file)
+        verts, faces = nb.freesurfer.read_geometry(surf_file)
 
-    return points, face_list
+    if type(verts) is list:
+        verts = np.array(verts)
+
+    if type(faces) is list:
+        faces = np.array(faces)
+
+    return verts, faces
 
 def write_surf(surf_file, verts, faces):
     if surf_file.endswith(".vtk"):
         write_vtk(surf_file, verts, faces)
     elif surf_file.endswith(".off"):
         write_off(surf_file, verts, faces)
+    elif surf_file.endswith(".obj"):
+        write_obj(surf_file, verts, faces)
     else:
         if type(verts) is list:
             verts = np.array(verts)
@@ -27,6 +37,40 @@ def write_surf(surf_file, verts, faces):
             faces = np.array(faces)
 
         nb.freesurfer.write_geometry(surf_file, verts, faces)
+
+def read_surf_labels(lab_file):
+
+    lab = []
+    with open(lab_file) as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+
+            lab.append(int(line))
+
+    return np.array(lab)
+
+def write_surf_labels(lab_file, lab):
+    with open(lab_file, 'w') as f:
+        for label in lab:
+            f.write('%d\n' % label)
+
+def read_surf_cdata(cdata_file):
+
+    cdata = []
+    with open(cdata_file) as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+
+            cdata.append(float(line))
+
+    return np.array(cdata)
+
+def write_surf_cdata(cdata_file, cdata):
+    with open(cdata_file, 'w') as f:
+        for c in cdata:
+            f.write('%f\n' % c)
 
 def read_off(filename):
     vertices = []
@@ -62,13 +106,42 @@ def write_off(filename, verts, faces):
 
     with open(filename, 'w') as f:
         f.write('OFF\n')
-        f.write('%d %d\n', verts.shape[0], faces.shape[0])
+        f.write('%d %d\n' % (verts.shape[0], faces.shape[0]))
 
         for vert in verts:
-            f.write("%f %f %f\n", vert[0], vert[1], vert[2])
+            f.write("%f %f %f\n" % (vert[0], vert[1], vert[2]))
 
-        for face in verts:
-            f.write("%d %d %d\n", face[0], face[1], face[2])
+        for face in faces:
+            f.write("%d %d %d\n" % (face[0], face[1], face[2]))
+
+def read_obj(filename):
+
+    verts = []
+    faces = []
+
+    with open(filename) as f:
+        for line in f:
+            if line[0] == 'v':
+                verts.append(map(float, line.split()[1:]))
+            elif line[0] == 'f':
+                faces.append([x - 1 for x in map(int, line.split()[1:])])
+
+    return verts, faces
+
+def write_obj(filename, verts, faces):
+
+    if type(verts) is list:
+        verts = np.array(verts)
+
+    if type(faces) is list:
+        faces = np.array(faces)
+
+    with open(filename, 'w') as f:
+        for vert in verts:
+            f.write("v %f %f %f\n" % (vert[0], vert[1], vert[2]))
+
+        for face in faces:
+            f.write("f %d %d %d\n" % (face[0] + 1, face[1] + 1, face[2] + 1))
 
 def read_vtk(filename):
 
